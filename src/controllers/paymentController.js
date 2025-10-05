@@ -1,84 +1,34 @@
 const Payment = require('../models/Payment');
 const Booking = require('../models/Booking');
-const Property = require('../models/Property');
-const Settings = require('../models/Settings');
+const GarbageCollectionBooking = require('../models/GarbageCollectionCompany');
 
-// Initialize payment for a booking
-exports.createPayment = async (req, res) => {
+// Process viewing fee payment
+exports.processViewingFeePayment = async (req, res) => {
     try {
-        const { bookingId, paymentMethod } = req.body;
-
-        const booking = await Booking.findById(bookingId).populate('property');
-        if (!booking) {
-            return res.status(404).json({ success: false, message: 'Booking not found' });
-        }
-
-        // Check if customer owns the booking
-        if (booking.customer.toString() !== req.user.id) {
-            return res.status(403).json({ success: false, message: 'Not authorized' });
-        }
-
-        // Check if payment already exists
-        const existingPayment = await Payment.findOne({ booking: bookingId });
-        if (existingPayment) {
-            return res.status(400).json({ success: false, message: 'Payment already exists for this booking' });
-        }
-
-        // Get global settings
-        const settings = await Settings.findOne({ settingType: 'global' });
-        const downPaymentPercentage = settings?.downPaymentPercentage || 20;
-        const managerCommissionEnabled = settings?.managerCommissionEnabled || false;
-        const managerCommissionPercentage = settings?.managerCommissionPercentage || 5;
-
-        const payment = await Payment.create({
-            booking: booking._id,
-            property: booking.property._id,
-            customer: req.user.id,
-            propertyManager: booking.property.propertyManager,
-            totalAmount: booking.property.price,
-            downPaymentPercentage,
-            paymentMethod,
-            managerCommission: {
-                enabled: managerCommissionEnabled,
-                percentage: managerCommissionPercentage
-            }
-        });
-
-        const populatedPayment = await Payment.findById(payment._id)
-            .populate('booking')
-            .populate('property')
-            .populate('customer', 'name email phone')
-            .populate('propertyManager', 'name email phone');
-
-        res.status(201).json({ success: true, data: populatedPayment });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// Process down payment
-exports.processDownPayment = async (req, res) => {
-    try {
-        const { transactionId } = req.body;
+        const { transactionId, paymentMethod } = req.body;
         const payment = await Payment.findById(req.params.id);
 
         if (!payment) {
             return res.status(404).json({ success: false, message: 'Payment not found' });
         }
 
+        if (payment.paymentType !== 'viewing_fee') {
+            return res.status(400).json({ success: false, message: 'This is not a viewing fee payment' });
+        }
+
         if (payment.customer.toString() !== req.user.id) {
             return res.status(403).json({ success: false, message: 'Not authorized' });
         }
 
-        if (payment.downPaymentStatus === 'paid') {
-            return res.status(400).json({ success: false, message: 'Down payment already processed' });
+        if (payment.paymentStatus === 'paid') {
+            return res.status(400).json({ success: false, message: 'Payment already processed' });
         }
 
-        // Here you would integrate with actual payment gateway
-        // For now, we'll simulate successful payment
-        payment.downPaymentStatus = 'paid';
-        payment.downPaymentPaidAt = Date.now();
-        payment.transactionIds.downPayment = transactionId || `TXN-DOWN-${Date.now()}`;
+        // Process payment (integrate with payment gateway here)
+        payment.paymentStatus = 'paid';
+        payment.paymentMethod = paymentMethod || payment.paymentMethod;
+        payment.transactionId = transactionId || `TXN-VIEW-${Date.now()}`;
+        payment.paidAt = Date.now();
 
         await payment.save();
 
@@ -91,37 +41,41 @@ exports.processDownPayment = async (req, res) => {
     }
 };
 
-// Process final payment
-exports.processFinalPayment = async (req, res) => {
+// Process garbage collection payment
+exports.processGarbageCollectionPayment = async (req, res) => {
     try {
-        const { transactionId } = req.body;
+        const { transactionId, paymentMethod } = req.body;
         const payment = await Payment.findById(req.params.id);
 
         if (!payment) {
             return res.status(404).json({ success: false, message: 'Payment not found' });
+        }
+
+        if (payment.paymentType !== 'garbage_collection') {
+            return res.status(400).json({ success: false, message: 'This is not a garbage collection payment' });
         }
 
         if (payment.customer.toString() !== req.user.id) {
             return res.status(403).json({ success: false, message: 'Not authorized' });
         }
 
-        if (payment.downPaymentStatus !== 'paid') {
-            return res.status(400).json({ success: false, message: 'Down payment must be completed first' });
+        if (payment.paymentStatus === 'paid') {
+            return res.status(400).json({ success: false, message: 'Payment already processed' });
         }
 
-        if (payment.finalPaymentStatus === 'paid') {
-            return res.status(400).json({ success: false, message: 'Final payment already processed' });
-        }
-
-        // Here you would integrate with actual payment gateway
-        payment.finalPaymentStatus = 'paid';
-        payment.finalPaymentPaidAt = Date.now();
-        payment.transactionIds.finalPayment = transactionId || `TXN-FINAL-${Date.now()}`;
+        // Process payment (integrate with payment gateway here)
+        payment.paymentStatus = 'paid';
+        payment.paymentMethod = paymentMethod || payment.paymentMethod;
+        payment.transactionId = transactionId || `TXN-GARBAGE-${Date.now()}`;
+        payment.paidAt = Date.now();
 
         await payment.save();
 
-        // Update booking status to completed
-        await Booking.findByIdAndUpdate(payment.booking, { status: 'completed' });
+        // Update garbage booking status to confirmed
+        await GarbageCollectionBooking.findByIdAndUpdate(payment.garbageBooking, {
+            status: 'confirmed',
+            paymentStatus: 'paid'
+        });
 
         res.status(200).json({ success: true, data: payment });
     } catch (error) {
@@ -129,53 +83,64 @@ exports.processFinalPayment = async (req, res) => {
     }
 };
 
-// Process manager commission payment
-exports.processManagerCommission = async (req, res) => {
+// Admin: Pay commission to garbage collection company
+exports.payCommissionToCompany = async (req, res) => {
     try {
-        const { transactionId } = req.body;
-        const payment = await Payment.findById(req.params.id);
+        const payment = await Payment.findById(req.params.id)
+            .populate('garbageCollectionCompany');
 
         if (!payment) {
             return res.status(404).json({ success: false, message: 'Payment not found' });
         }
 
-        // Only admin or the property manager can process commission
-        if (req.user.role !== 'admin' && payment.propertyManager.toString() !== req.user.id) {
-            return res.status(403).json({ success: false, message: 'Not authorized' });
+        if (payment.paymentType !== 'garbage_collection') {
+            return res.status(400).json({ success: false, message: 'This is not a garbage collection payment' });
         }
 
-        if (!payment.managerCommission.enabled) {
-            return res.status(400).json({ success: false, message: 'Manager commission is not enabled' });
+        if (payment.paymentStatus !== 'paid') {
+            return res.status(400).json({ success: false, message: 'Customer payment must be completed first' });
         }
 
-        if (payment.managerCommission.status === 'paid') {
-            return res.status(400).json({ success: false, message: 'Commission already paid' });
+        if (payment.commissionPaidToCompany) {
+            return res.status(400).json({ success: false, message: 'Commission already paid to company' });
         }
 
-        if (payment.finalPaymentStatus !== 'paid') {
-            return res.status(400).json({ success: false, message: 'Final payment must be completed first' });
+        // Check if service is completed
+        const garbageBooking = await GarbageCollectionBooking.findById(payment.garbageBooking);
+        if (garbageBooking.status !== 'completed') {
+            return res.status(400).json({ success: false, message: 'Service must be completed before paying commission' });
         }
 
-        payment.managerCommission.status = 'paid';
-        payment.managerCommission.paidAt = Date.now();
-        payment.transactionIds.managerCommission = transactionId || `TXN-COMM-${Date.now()}`;
+        payment.commissionPaidToCompany = true;
+        payment.commissionPaidAt = Date.now();
 
         await payment.save();
 
-        res.status(200).json({ success: true, data: payment });
+        // Update garbage booking
+        await GarbageCollectionBooking.findByIdAndUpdate(payment.garbageBooking, {
+            commissionPaidToCompany: true,
+            commissionPaidAt: Date.now()
+        });
+
+        res.status(200).json({
+            success: true,
+            message: `Commission of ${payment.companyEarnings} paid to ${payment.garbageCollectionCompany.companyName}`,
+            data: payment
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
 };
 
-// Get payment details
+// Get payment by ID
 exports.getPayment = async (req, res) => {
     try {
         const payment = await Payment.findById(req.params.id)
             .populate('booking')
             .populate('property')
-            .populate('customer', 'name email phone')
-            .populate('propertyManager', 'name email phone');
+            .populate('garbageBooking')
+            .populate('garbageCollectionCompany')
+            .populate('customer', 'name email phone');
 
         if (!payment) {
             return res.status(404).json({ success: false, message: 'Payment not found' });
@@ -186,32 +151,39 @@ exports.getPayment = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Not authorized' });
         }
 
-        if (req.user.role === 'property_manager' && payment.propertyManager._id.toString() !== req.user.id) {
-            return res.status(403).json({ success: false, message: 'Not authorized' });
-        }
-
         res.status(200).json({ success: true, data: payment });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
 };
 
-// Get all payments (with filters)
+// Get all payments with filters
 exports.getPayments = async (req, res) => {
     try {
+        const { paymentType, paymentStatus } = req.query;
         let query = {};
 
         if (req.user.role === 'customer') {
             query.customer = req.user.id;
-        } else if (req.user.role === 'property_manager') {
-            query.propertyManager = req.user.id;
+        } else if (req.user.role === 'garbage_collection_company') {
+            const User = require('../models/User');
+            const user = await User.findById(req.user.id);
+            if (user.garbageCollectionProfile) {
+                query.garbageCollectionCompany = user.garbageCollectionProfile;
+                query.paymentType = 'garbage_collection';
+            }
         }
+
+        // Apply filters
+        if (paymentType) query.paymentType = paymentType;
+        if (paymentStatus) query.paymentStatus = paymentStatus;
 
         const payments = await Payment.find(query)
             .populate('booking')
             .populate('property')
+            .populate('garbageBooking')
+            .populate('garbageCollectionCompany')
             .populate('customer', 'name email phone')
-            .populate('propertyManager', 'name email phone')
             .sort('-createdAt');
 
         res.status(200).json({ success: true, count: payments.length, data: payments });
@@ -226,11 +198,28 @@ exports.getPaymentByBooking = async (req, res) => {
         const payment = await Payment.findOne({ booking: req.params.bookingId })
             .populate('booking')
             .populate('property')
-            .populate('customer', 'name email phone')
-            .populate('propertyManager', 'name email phone');
+            .populate('customer', 'name email phone');
 
         if (!payment) {
             return res.status(404).json({ success: false, message: 'Payment not found for this booking' });
+        }
+
+        res.status(200).json({ success: true, data: payment });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// Get payment by garbage booking ID
+exports.getPaymentByGarbageBooking = async (req, res) => {
+    try {
+        const payment = await Payment.findOne({ garbageBooking: req.params.garbageBookingId })
+            .populate('garbageBooking')
+            .populate('garbageCollectionCompany')
+            .populate('customer', 'name email phone');
+
+        if (!payment) {
+            return res.status(404).json({ success: false, message: 'Payment not found for this garbage booking' });
         }
 
         res.status(200).json({ success: true, data: payment });

@@ -22,12 +22,17 @@ const userSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['admin', 'property_manager', 'customer'],
+        enum: ['admin', 'property_manager', 'customer', 'garbage_collection_company'],
         default: 'customer'
     },
     phone: {
         type: String,
         trim: true
+    },
+    // Reference to garbage collection company profile if role is garbage_collection_company
+    garbageCollectionProfile: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'GarbageCollectionCompany'
     },
     isActive: {
         type: Boolean,

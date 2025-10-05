@@ -7,6 +7,8 @@ const bookingRoutes = require('./routes/bookings');
 const userRoutes = require('./routes/users');
 const paymentRoutes = require('./routes/payment');
 const settingsRoutes = require('./routes/settings');
+const garbageBookingRoutes = require('./routes/garbageBookings');
+const garbageCompanyRoutes = require('./routes/garbageCollection');
 
 const app = express();
 
@@ -27,7 +29,7 @@ app.use('/uploads', express.static('src/uploads'));
 app.get('/', (req, res) => {
     res.json({
         success: true,
-        message: 'House Hunting Backend API',
+        message: 'House Hunting & Garbage Collection Backend API',
         version: '1.0.0',
         port: process.env.PORT || 5010
     });
@@ -40,6 +42,8 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/garbage-bookings', garbageBookingRoutes);
+app.use('/api/garbage-companies', garbageCompanyRoutes);
 
 // 404 handler
 app.use((req, res, next) => {

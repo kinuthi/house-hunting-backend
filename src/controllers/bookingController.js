@@ -1,11 +1,10 @@
 const Booking = require('../models/Booking');
 const Property = require('../models/Property');
 const Payment = require('../models/Payment');
-const Settings = require('../models/Settings');
 
 exports.createBooking = async (req, res) => {
     try {
-        const { property, visitDate, visitTime, notes } = req.body;
+        const { property, visitDate, visitTime, notes, numberOfProperties } = req.body;
 
         const propertyExists = await Property.findById(property);
         if (!propertyExists) {
@@ -17,42 +16,22 @@ exports.createBooking = async (req, res) => {
             customer: req.user.id,
             visitDate,
             visitTime,
-            notes
+            notes,
+            numberOfProperties: numberOfProperties || 1
         });
 
         const populatedBooking = await Booking.findById(booking._id)
             .populate('property')
             .populate('customer', 'name email phone');
 
-        // Get settings for payment calculation
-        const settings = await Settings.findOne({ settingType: 'global' });
-        const downPaymentPercentage = settings?.downPaymentPercentage || 20;
-        const managerCommissionEnabled = settings?.managerCommissionEnabled || false;
-        const managerCommissionPercentage = settings?.managerCommissionPercentage || 5;
-
-        // Calculate payment amounts
-        const totalAmount = propertyExists.price;
-        const downPaymentAmount = (totalAmount * downPaymentPercentage) / 100;
-        const remainingAmount = totalAmount - downPaymentAmount;
-        const managerCommissionAmount = managerCommissionEnabled
-            ? (totalAmount * managerCommissionPercentage) / 100
-            : 0;
-
-        // Create payment record with calculated amounts
+        // Create payment record for viewing fee
         await Payment.create({
+            paymentType: 'viewing_fee',
             booking: booking._id,
             property: propertyExists._id,
             customer: req.user.id,
-            propertyManager: propertyExists.propertyManager,
-            totalAmount: totalAmount,
-            downPaymentPercentage: downPaymentPercentage,
-            downPaymentAmount: downPaymentAmount,
-            remainingAmount: remainingAmount,
-            managerCommission: {
-                enabled: managerCommissionEnabled,
-                percentage: managerCommissionPercentage,
-                amount: managerCommissionAmount
-            }
+            numberOfProperties: booking.numberOfProperties,
+            totalAmount: booking.viewingFee
         });
 
         res.status(201).json({ success: true, data: populatedBooking });

@@ -8,10 +8,8 @@ exports.getSettings = async (req, res) => {
         // Create default settings if none exist
         if (!settings) {
             settings = await Settings.create({
-                downPaymentPercentage: 20,
-                managerCommissionEnabled: false,
-                managerCommissionPercentage: 5,
-                settingType: 'global'
+                settingType: 'global',
+                garbageCollectionCommissionPercentage: 20
             });
         }
 
@@ -21,37 +19,31 @@ exports.getSettings = async (req, res) => {
     }
 };
 
-// Update settings (Admin only)
+// Update settings (admin only)
 exports.updateSettings = async (req, res) => {
     try {
-        const { downPaymentPercentage, managerCommissionEnabled, managerCommissionPercentage } = req.body;
-
         let settings = await Settings.findOne({ settingType: 'global' });
 
         if (!settings) {
-            // Create if doesn't exist
+            // Create settings if they don't exist
             settings = await Settings.create({
-                downPaymentPercentage,
-                managerCommissionEnabled,
-                managerCommissionPercentage,
+                ...req.body,
                 settingType: 'global'
             });
         } else {
-            // Update existing
-            if (downPaymentPercentage !== undefined) {
-                settings.downPaymentPercentage = downPaymentPercentage;
-            }
-            if (managerCommissionEnabled !== undefined) {
-                settings.managerCommissionEnabled = managerCommissionEnabled;
-            }
-            if (managerCommissionPercentage !== undefined) {
-                settings.managerCommissionPercentage = managerCommissionPercentage;
-            }
-
-            await settings.save();
+            // Update existing settings
+            settings = await Settings.findOneAndUpdate(
+                { settingType: 'global' },
+                req.body,
+                { new: true, runValidators: true }
+            );
         }
 
-        res.status(200).json({ success: true, data: settings });
+        res.status(200).json({
+            success: true,
+            message: 'Settings updated successfully',
+            data: settings
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
