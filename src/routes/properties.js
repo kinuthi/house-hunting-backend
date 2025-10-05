@@ -15,11 +15,11 @@ const router = express.Router();
 
 // Public routes - anyone can view properties
 router.route('/')
-    .get(getProperties)  // REMOVED protect - now public
+    .get(getProperties)
     .post(protect, authorize('admin', 'property_manager'), upload.array('images', 10), createProperty);
 
 router.route('/:id')
-    .get(getProperty)  // REMOVED protect - now public
+    .get(getProperty)
     .put(protect, authorize('admin', 'property_manager'), updateProperty)
     .delete(protect, authorize('admin', 'property_manager'), deleteProperty);
 

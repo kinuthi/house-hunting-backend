@@ -1,22 +1,28 @@
 const mongoose = require('mongoose');
 
 const settingsSchema = new mongoose.Schema({
-    // Payment Settings
-    downPaymentPercentage: {
+    // Garbage Collection Commission Settings
+    garbageCollectionCommissionPercentage: {
         type: Number,
         default: 20,
         min: 0,
         max: 100
     },
-    managerCommissionEnabled: {
-        type: Boolean,
-        default: false
-    },
-    managerCommissionPercentage: {
+    // Property Viewing Fee Settings
+    viewingFeeBase: {
         type: Number,
-        default: 5,
-        min: 0,
-        max: 100
+        default: 1500, // Fee for first 3 properties
+        min: 0
+    },
+    viewingFeeAdditional: {
+        type: Number,
+        default: 500, // Fee per additional property after 3
+        min: 0
+    },
+    viewingFeeThreshold: {
+        type: Number,
+        default: 3, // Number of properties included in base fee
+        min: 1
     },
     // Other settings can be added here
     settingType: {
