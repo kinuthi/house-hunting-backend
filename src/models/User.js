@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 const userSchema = new mongoose.Schema({
     name: {
@@ -34,9 +35,76 @@ const userSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'GarbageCollectionCompany'
     },
+    // ID document verification for property managers and garbage collection companies
+    idDocument: {
+        front: {
+            type: String, // URL to front of ID
+            required: function () {
+                return this.role === 'property_manager' || this.role === 'garbage_collection_company';
+            }
+        },
+        back: {
+            type: String, // URL to back of ID
+            required: function () {
+                return this.role === 'property_manager' || this.role === 'garbage_collection_company';
+            }
+        },
+        idNumber: {
+            type: String,
+            required: function () {
+                return this.role === 'property_manager' || this.role === 'garbage_collection_company';
+            }
+        },
+        idType: {
+            type: String,
+            enum: ['national_id', 'passport', 'drivers_license'],
+            required: function () {
+                return this.role === 'property_manager' || this.role === 'garbage_collection_company';
+            }
+        },
+        isVerified: {
+            type: Boolean,
+            default: false
+        },
+        verifiedAt: Date,
+        verifiedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+        }
+    },
+    // Email verification fields
+    isEmailVerified: {
+        type: Boolean,
+        default: false
+    },
+    emailVerificationOTP: {
+        type: String,
+        select: false
+    },
+    emailVerificationOTPExpires: {
+        type: Date,
+        select: false
+    },
+    // Account status
     isActive: {
         type: Boolean,
         default: true
+    },
+    // Account approval status (for property managers and garbage collection companies)
+    approvalStatus: {
+        type: String,
+        enum: ['pending', 'approved', 'rejected'],
+        default: function () {
+            return (this.role === 'property_manager' || this.role === 'garbage_collection_company')
+                ? 'pending'
+                : 'approved';
+        }
+    },
+    approvalNotes: String,
+    approvedAt: Date,
+    approvedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
     },
     createdAt: {
         type: Date,
@@ -54,6 +122,41 @@ userSchema.pre('save', async function (next) {
 
 userSchema.methods.matchPassword = async function (enteredPassword) {
     return await bcrypt.compare(enteredPassword, this.password);
+};
+
+// Generate email verification OTP
+userSchema.methods.generateEmailVerificationOTP = function () {
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Hash OTP and set to emailVerificationOTP field
+    this.emailVerificationOTP = crypto
+        .createHash('sha256')
+        .update(otp)
+        .digest('hex');
+
+    // Set expire time (10 minutes)
+    this.emailVerificationOTPExpires = Date.now() + 10 * 60 * 1000;
+
+    return otp;
+};
+
+// Verify OTP
+userSchema.methods.verifyEmailOTP = async function (otp) {
+    // Hash the provided OTP
+    const hashedOTP = crypto
+        .createHash('sha256')
+        .update(otp)
+        .digest('hex');
+
+    // Check if OTP matches and is not expired
+    if (
+        this.emailVerificationOTP === hashedOTP &&
+        this.emailVerificationOTPExpires > Date.now()
+    ) {
+        return true;
+    }
+    return false;
 };
 
 module.exports = mongoose.model('User', userSchema);

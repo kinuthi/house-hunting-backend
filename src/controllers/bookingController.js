@@ -4,34 +4,53 @@ const Payment = require('../models/Payment');
 
 exports.createBooking = async (req, res) => {
     try {
-        const { property, visitDate, visitTime, notes, numberOfProperties } = req.body;
+        const {
+            property,
+            visitDate,
+            visitTime,
+            notes,
+            numberOfProperties,
+            cleaningService
+        } = req.body;
 
         const propertyExists = await Property.findById(property);
         if (!propertyExists) {
             return res.status(404).json({ success: false, message: 'Property not found' });
         }
 
-        const booking = await Booking.create({
+        // Prepare booking data
+        const bookingData = {
             property,
             customer: req.user.id,
             visitDate,
             visitTime,
             notes,
             numberOfProperties: numberOfProperties || 1
-        });
+        };
+
+        // Add cleaning service if provided
+        if (cleaningService) {
+            bookingData.cleaningService = {
+                required: cleaningService.required || false,
+                fee: cleaningService.fee || 0,
+                notes: cleaningService.notes || ''
+            };
+        }
+
+        const booking = await Booking.create(bookingData);
 
         const populatedBooking = await Booking.findById(booking._id)
             .populate('property')
             .populate('customer', 'name email phone');
 
-        // Create payment record for viewing fee
+        // Create payment record for viewing fee (and cleaning fee if applicable)
         await Payment.create({
             paymentType: 'viewing_fee',
             booking: booking._id,
             property: propertyExists._id,
             customer: req.user.id,
             numberOfProperties: booking.numberOfProperties,
-            totalAmount: booking.viewingFee
+            totalAmount: booking.totalFee // Use totalFee which includes cleaning fee
         });
 
         res.status(201).json({ success: true, data: populatedBooking });
@@ -83,6 +102,71 @@ exports.getBooking = async (req, res) => {
             if (property.propertyManager.toString() !== req.user.id) {
                 return res.status(403).json({ success: false, message: 'Not authorized' });
             }
+        }
+
+        res.status(200).json({ success: true, data: booking });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+exports.updateBooking = async (req, res) => {
+    try {
+        const {
+            visitDate,
+            visitTime,
+            notes,
+            numberOfProperties,
+            cleaningService
+        } = req.body;
+
+        let booking = await Booking.findById(req.params.id).populate('property');
+
+        if (!booking) {
+            return res.status(404).json({ success: false, message: 'Booking not found' });
+        }
+
+        // Check authorization
+        if (req.user.role === 'customer' && booking.customer.toString() !== req.user.id) {
+            return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+
+        if (req.user.role === 'property_manager') {
+            const property = await Property.findById(booking.property._id);
+            if (property.propertyManager.toString() !== req.user.id) {
+                return res.status(403).json({ success: false, message: 'Not authorized' });
+            }
+        }
+
+        // Prepare update data
+        const updateData = {};
+        if (visitDate) updateData.visitDate = visitDate;
+        if (visitTime) updateData.visitTime = visitTime;
+        if (notes !== undefined) updateData.notes = notes;
+        if (numberOfProperties) updateData.numberOfProperties = numberOfProperties;
+        if (cleaningService !== undefined) {
+            updateData.cleaningService = {
+                required: cleaningService.required || false,
+                fee: cleaningService.fee || 0,
+                notes: cleaningService.notes || ''
+            };
+        }
+
+        booking = await Booking.findByIdAndUpdate(
+            req.params.id,
+            updateData,
+            { new: true, runValidators: true }
+        ).populate('property').populate('customer', 'name email phone');
+
+        // Update payment record if booking details changed
+        if (numberOfProperties || cleaningService !== undefined) {
+            await Payment.findOneAndUpdate(
+                { booking: booking._id, paymentType: 'viewing_fee' },
+                {
+                    numberOfProperties: booking.numberOfProperties,
+                    totalAmount: booking.totalFee
+                }
+            );
         }
 
         res.status(200).json({ success: true, data: booking });
