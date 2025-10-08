@@ -86,7 +86,7 @@ exports.getProperties = async (req, res) => {
             status,
             lat,
             lon,
-            radius, // radius in kilometers, default 50km
+            radius,
             limit,
             page = 1,
             sort
@@ -101,22 +101,22 @@ exports.getProperties = async (req, res) => {
                 query.propertyManager = req.user.id;
             } else if (req.user.role === 'customer') {
                 query.isPublished = true;
-                query.status = { $ne: 'sold' }; // Don't show sold properties to customers
+                query.status = { $ne: 'sold' };
             }
         } else {
             query.isPublished = true;
-            query.status = { $ne: 'sold' }; // Don't show sold properties to public
+            query.status = { $ne: 'sold' };
         }
 
-        // Geospatial search - if coordinates provided, use $near for proximity search
+        // Geospatial search - if coordinates provided, use $nearSphere for proximity search
         if (lat && lon) {
             const latitude = parseFloat(lat);
             const longitude = parseFloat(lon);
             const searchRadius = radius ? parseFloat(radius) : 50; // default 50km
 
-            // Check if properties have location field
+            // Use $nearSphere for better accuracy
             query.location = {
-                $near: {
+                $nearSphere: {
                     $geometry: {
                         type: 'Point',
                         coordinates: [longitude, latitude]
@@ -124,9 +124,10 @@ exports.getProperties = async (req, res) => {
                     $maxDistance: searchRadius * 1000 // Convert km to meters
                 }
             };
+
+            console.log('Using geospatial search:', { lat: latitude, lon: longitude, radius: searchRadius });
         } else if (city) {
             // Text-based city search with case-insensitive regex
-            // Use flexible matching to catch variations
             const cityRegex = new RegExp(city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
             query['address.city'] = cityRegex;
         }
@@ -198,8 +199,16 @@ exports.getProperties = async (req, res) => {
 
         const properties = await queryBuilder;
 
-        // Get total count for pagination
-        const totalCount = await Property.countDocuments(query);
+        // Get total count for pagination (without geospatial query for accurate count)
+        let countQuery = { ...query };
+        if (countQuery.location && countQuery.location.$nearSphere) {
+            delete countQuery.location;
+            if (city) {
+                const cityRegex = new RegExp(city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+                countQuery['address.city'] = cityRegex;
+            }
+        }
+        const totalCount = await Property.countDocuments(countQuery);
 
         res.status(200).json({
             success: true,
