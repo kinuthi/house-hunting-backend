@@ -114,9 +114,21 @@ exports.getProperties = async (req, res) => {
             const longitude = parseFloat(lon);
             const searchRadius = radius ? parseFloat(radius) : 50; // default 50km
 
-            // Check if properties have location field
+            // Only use geospatial query if properties have location field
+            // This prevents errors when location.coordinates is missing
             query.location = {
-                $near: {
+                $exists: true,
+                $ne: null
+            };
+
+            query['location.coordinates'] = {
+                $exists: true,
+                $ne: []
+            };
+
+            // Use $nearSphere for better accuracy
+            query.location = {
+                $nearSphere: {
                     $geometry: {
                         type: 'Point',
                         coordinates: [longitude, latitude]
@@ -124,10 +136,33 @@ exports.getProperties = async (req, res) => {
                     $maxDistance: searchRadius * 1000 // Convert km to meters
                 }
             };
+
+            console.log('Using geospatial search:', { lat: latitude, lon: longitude, radius: searchRadius });
         } else if (city) {
             // Text-based city search with case-insensitive regex
             // Use flexible matching to catch variations
-            const cityRegex = new RegExp(city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+            const cityRegex = new RegExp(city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\        // Geospatial search - if coordinates provided, use $near for proximity search
+        if (lat && lon) {
+                const latitude = parseFloat(lat);
+                const longitude = parseFloat(lon);
+                const searchRadius = radius ? parseFloat(radius) : 50; // default 50km
+
+                // Check if properties have location field
+                query.location = {
+                    $near: {
+                        $geometry: {
+                            type: 'Point',
+                            coordinates: [longitude, latitude]
+                        },
+                        $maxDistance: searchRadius * 1000 // Convert km to meters
+                    }
+                };
+            } else if (city) {
+                // Text-based city search with case-insensitive regex
+                // Use flexible matching to catch variations
+                const cityRegex = new RegExp(city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+                query['address.city'] = cityRegex;
+            } '), 'i');
             query['address.city'] = cityRegex;
         }
 
