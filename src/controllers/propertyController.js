@@ -29,6 +29,7 @@ exports.createProperty = async (req, res) => {
         }
 
         req.body.propertyManager = req.user.id;
+
         const property = await Property.create(req.body);
 
         // Handle image uploads if files are present
@@ -75,9 +76,24 @@ exports.createProperty = async (req, res) => {
 
 exports.getProperties = async (req, res) => {
     try {
-        const { city, propertyType, minPrice, maxPrice, bedrooms, status } = req.query;
+        const {
+            city,
+            propertyType,
+            minPrice,
+            maxPrice,
+            bedrooms,
+            bathrooms,
+            status,
+            lat,
+            lon,
+            radius, // radius in kilometers, default 50km
+            limit,
+            page = 1,
+            sort
+        } = req.query;
 
         let query = {};
+        let sortOptions = {};
 
         // Check if user is authenticated
         if (req.user) {
@@ -85,33 +101,142 @@ exports.getProperties = async (req, res) => {
                 query.propertyManager = req.user.id;
             } else if (req.user.role === 'customer') {
                 query.isPublished = true;
+                query.status = { $ne: 'sold' }; // Don't show sold properties to customers
             }
         } else {
             query.isPublished = true;
+            query.status = { $ne: 'sold' }; // Don't show sold properties to public
         }
 
-        // Apply filters
-        if (city) query['address.city'] = new RegExp(city, 'i');
-        if (propertyType) query.propertyType = propertyType;
-        if (bedrooms) query.bedrooms = bedrooms;
-        if (status) query.status = status;
+        // Geospatial search - if coordinates provided, use $near for proximity search
+        if (lat && lon) {
+            const latitude = parseFloat(lat);
+            const longitude = parseFloat(lon);
+            const searchRadius = radius ? parseFloat(radius) : 50; // default 50km
+
+            // Check if properties have location field
+            query.location = {
+                $near: {
+                    $geometry: {
+                        type: 'Point',
+                        coordinates: [longitude, latitude]
+                    },
+                    $maxDistance: searchRadius * 1000 // Convert km to meters
+                }
+            };
+        } else if (city) {
+            // Text-based city search with case-insensitive regex
+            // Use flexible matching to catch variations
+            const cityRegex = new RegExp(city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+            query['address.city'] = cityRegex;
+        }
+
+        // Apply other filters
+        if (propertyType) {
+            query.propertyType = propertyType;
+        }
+
+        if (bedrooms) {
+            query.bedrooms = { $gte: parseInt(bedrooms) };
+        }
+
+        if (bathrooms) {
+            query.bathrooms = { $gte: parseFloat(bathrooms) };
+        }
+
+        if (status) {
+            query.status = status;
+        }
+
+        // Price range filter
         if (minPrice || maxPrice) {
             query.price = {};
-            if (minPrice) query.price.$gte = minPrice;
-            if (maxPrice) query.price.$lte = maxPrice;
+            if (minPrice) query.price.$gte = parseFloat(minPrice);
+            if (maxPrice) query.price.$lte = parseFloat(maxPrice);
         }
 
-        const properties = await Property.find(query).populate('propertyManager', 'name email phone');
-        res.status(200).json({ success: true, count: properties.length, data: properties });
+        // Sorting
+        switch (sort) {
+            case 'price_asc':
+                sortOptions.price = 1;
+                break;
+            case 'price_desc':
+                sortOptions.price = -1;
+                break;
+            case 'newest':
+                sortOptions.createdAt = -1;
+                break;
+            case 'oldest':
+                sortOptions.createdAt = 1;
+                break;
+            case 'popular':
+                sortOptions.viewCount = -1;
+                break;
+            default:
+                // If using geospatial search, results are already sorted by distance
+                if (!lat || !lon) {
+                    sortOptions.createdAt = -1; // Most recent first by default
+                }
+        }
+
+        console.log('Property Query:', JSON.stringify(query, null, 2));
+        console.log('Sort Options:', JSON.stringify(sortOptions, null, 2));
+
+        let queryBuilder = Property.find(query)
+            .populate('propertyManager', 'name email phone');
+
+        // Only apply sort if we have sort options and not using geospatial search
+        if (Object.keys(sortOptions).length > 0) {
+            queryBuilder = queryBuilder.sort(sortOptions);
+        }
+
+        // Pagination
+        const pageSize = limit ? parseInt(limit) : 20;
+        const skip = (parseInt(page) - 1) * pageSize;
+
+        queryBuilder = queryBuilder.skip(skip).limit(pageSize);
+
+        const properties = await queryBuilder;
+
+        // Get total count for pagination
+        const totalCount = await Property.countDocuments(query);
+
+        res.status(200).json({
+            success: true,
+            count: properties.length,
+            total: totalCount,
+            page: parseInt(page),
+            pages: Math.ceil(totalCount / pageSize),
+            data: properties,
+            filters: {
+                city,
+                propertyType,
+                minPrice,
+                maxPrice,
+                bedrooms,
+                bathrooms,
+                status,
+                location: lat && lon ? {
+                    lat: parseFloat(lat),
+                    lon: parseFloat(lon),
+                    radius: radius ? parseFloat(radius) : 50
+                } : null
+            }
+        });
     } catch (error) {
         console.error('Error in getProperties:', error);
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({
+            success: false,
+            message: error.message,
+            error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 };
 
 exports.getProperty = async (req, res) => {
     try {
-        const property = await Property.findById(req.params.id).populate('propertyManager', 'name email phone');
+        const property = await Property.findById(req.params.id)
+            .populate('propertyManager', 'name email phone');
 
         if (!property) {
             return res.status(404).json({ success: false, message: 'Property not found' });
@@ -132,9 +257,55 @@ exports.getProperty = async (req, res) => {
             }
         }
 
+        // Increment view count (only for non-property managers viewing their own properties)
+        if (!req.user || req.user.role !== 'property_manager' || property.propertyManager._id.toString() !== req.user.id) {
+            property.viewCount = (property.viewCount || 0) + 1;
+            await property.save();
+        }
+
         res.status(200).json({ success: true, data: property });
     } catch (error) {
         console.error('Error in getProperty:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+exports.getNearbyProperties = async (req, res) => {
+    try {
+        const { lat, lon, radius = 50, limit = 10 } = req.query;
+
+        if (!lat || !lon) {
+            return res.status(400).json({
+                success: false,
+                message: 'Latitude and longitude are required'
+            });
+        }
+
+        const latitude = parseFloat(lat);
+        const longitude = parseFloat(lon);
+        const searchRadius = parseFloat(radius);
+
+        const filters = {
+            isPublished: true,
+            status: 'available'
+        };
+
+        const properties = await Property.findNearby(
+            longitude,
+            latitude,
+            searchRadius,
+            filters
+        ).limit(parseInt(limit));
+
+        res.status(200).json({
+            success: true,
+            count: properties.length,
+            data: properties,
+            center: { lat: latitude, lon: longitude },
+            radius: searchRadius
+        });
+    } catch (error) {
+        console.error('Error in getNearbyProperties:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
