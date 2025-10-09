@@ -9,6 +9,7 @@ const paymentRoutes = require('./routes/payment');
 const settingsRoutes = require('./routes/settings');
 const garbageBookingRoutes = require('./routes/garbageBookings');
 const garbageCompanyRoutes = require('./routes/garbageCollection');
+const contactRoutes = require('./routes/contact');
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/garbage-bookings', garbageBookingRoutes);
 app.use('/api/garbage-companies', garbageCompanyRoutes);
+app.use('/api/contacts', contactRoutes);
 
 // 404 handler
 app.use((req, res, next) => {
