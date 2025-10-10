@@ -1,248 +1,36 @@
 const User = require('../models/User');
-const GarbageCollectionCompany = require('../models/GarbageCollectionCompany');
-const emailService = require('../services/email');
-const jwt = require('jsonwebtoken');
-const { uploadToSpaces, deleteFromSpaces } = require('../services/fileUpload');
 
-const generateToken = (id) => {
-    return jwt.sign({ id }, process.env.JWT_SECRET, {
-        expiresIn: process.env.JWT_EXPIRE
-    });
-};
-
-exports.register = async (req, res) => {
+// @desc    Get all users
+// @route   GET /api/users
+// @access  Private/Admin
+exports.getAllUsers = async (req, res) => {
     try {
-        console.log('Registration request body:', req.body);
-        console.log('Files:', req.files);
+        const users = await User.find()
+            .select('-password')
+            .populate('garbageCollectionProfile')
+            .sort('-createdAt');
 
-        const { name, email, password, phone, role, idNumber, idType } = req.body;
-
-        // Parse garbageCollectionData if it exists (comes as string from FormData)
-        let garbageCollectionData = null;
-        if (req.body.garbageCollectionData) {
-            try {
-                garbageCollectionData = JSON.parse(req.body.garbageCollectionData);
-            } catch (e) {
-                console.error('Error parsing garbageCollectionData:', e);
-            }
-        }
-
-        console.log('Extracted values:', { name, email, password, phone, role });
-
-        // Check if user already exists
-        const userExists = await User.findOne({ email });
-        if (userExists) {
-            return res.status(400).json({ success: false, message: 'User already exists' });
-        }
-
-        const allowedRoles = ['customer', 'property_manager', 'garbage_collection_company'];
-        const userRole = allowedRoles.includes(role) ? role : 'customer';
-
-        // Validate ID documents ONLY for property managers
-        if (userRole === 'property_manager') {
-            if (!req.files || !req.files.idFront || !req.files.idBack) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'ID document front and back images are required for property manager verification'
-                });
-            }
-
-            if (!idNumber || !idType) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'ID number and ID type are required for property managers'
-                });
-            }
-        }
-
-        // Upload ID documents ONLY for property managers
-        let idDocumentData = null;
-        if (userRole === 'property_manager') {
-            try {
-                const idFrontFile = req.files.idFront[0];
-                const idBackFile = req.files.idBack[0];
-
-                console.log('Uploading ID front...');
-                // Upload front ID
-                const idFrontResult = await uploadToSpaces(
-                    idFrontFile,
-                    'id-documents'
-                );
-
-                if (!idFrontResult.success) {
-                    throw new Error('Failed to upload ID front: ' + idFrontResult.error);
-                }
-
-                console.log('ID front uploaded:', idFrontResult.data.url);
-
-                console.log('Uploading ID back...');
-                // Upload back ID
-                const idBackResult = await uploadToSpaces(
-                    idBackFile,
-                    'id-documents'
-                );
-
-                if (!idBackResult.success) {
-                    // Clean up front ID if back upload fails
-                    await deleteFromSpaces(idFrontResult.data.key);
-                    throw new Error('Failed to upload ID back: ' + idBackResult.error);
-                }
-
-                console.log('ID back uploaded:', idBackResult.data.url);
-
-                // Extract only the URL strings from the upload results
-                idDocumentData = {
-                    front: idFrontResult.data.url,
-                    back: idBackResult.data.url,
-                    idNumber: idNumber,
-                    idType: idType,
-                    isVerified: false
-                };
-
-                console.log('ID documents uploaded successfully:', idDocumentData);
-            } catch (uploadError) {
-                console.error('ID document upload error:', uploadError);
-                return res.status(500).json({
-                    success: false,
-                    message: 'Failed to upload ID documents: ' + uploadError.message
-                });
-            }
-        }
-
-        // Create user data
-        const userData = {
-            name,
-            email,
-            password,
-            phone,
-            role: userRole
-        };
-
-        // Add ID document data if available (only for property managers)
-        if (idDocumentData) {
-            userData.idDocument = idDocumentData;
-        }
-
-        console.log('Creating user with data:', { ...userData, password: '[HIDDEN]' });
-
-        // Create user
-        const user = await User.create(userData);
-
-        console.log('User created successfully:', user._id);
-
-        // If registering as garbage collection company, create their profile
-        if (userRole === 'garbage_collection_company') {
-            if (!garbageCollectionData) {
-                await user.deleteOne();
-                return res.status(400).json({
-                    success: false,
-                    message: 'Garbage collection company data is required'
-                });
-            }
-
-            const garbageCompany = await GarbageCollectionCompany.create({
-                ...garbageCollectionData,
-                email: user.email,
-                phone: user.phone
-            });
-
-            user.garbageCollectionProfile = garbageCompany._id;
-            await user.save({ validateBeforeSave: false });
-
-            console.log('Garbage collection company profile created:', garbageCompany._id);
-        }
-
-        // Generate OTP for email verification (only for customers, not property managers)
-        let otp = null;
-        if (userRole !== 'property_manager') {
-            otp = user.generateEmailVerificationOTP();
-            if (otp) {
-                await user.save({ validateBeforeSave: false });
-                console.log('OTP generated for user:', user.email);
-
-                // Send OTP verification email
-                try {
-                    await emailService.sendEmailVerificationOTP(user.email, {
-                        name: user.name,
-                        otp: otp
-                    });
-                    console.log('OTP email sent to:', user.email);
-                } catch (emailError) {
-                    console.error('Failed to send OTP email:', emailError);
-                }
-            }
-        }
-
-        // Send welcome email
-        try {
-            await emailService.sendWelcomeEmail(user.email, {
-                name: user.name,
-                role: user.role,
-                requiresApproval: userRole === 'property_manager' || userRole === 'garbage_collection_company'
-            });
-            console.log('Welcome email sent to:', user.email);
-        } catch (emailError) {
-            console.error('Failed to send welcome email:', emailError);
-        }
-
-        // Send notification to admin if user is property manager or garbage collection company
-        if (userRole === 'property_manager' || userRole === 'garbage_collection_company') {
-            try {
-                await emailService.sendNewUserApprovalNotificationToAdmin({
-                    name: user.name,
-                    email: user.email,
-                    role: user.role,
-                    phone: user.phone,
-                    idDocument: user.idDocument
-                });
-                console.log('Admin notification sent for user approval:', user.email);
-            } catch (emailError) {
-                console.error('Failed to send admin notification:', emailError);
-            }
-        }
-
-        // For property managers, generate token immediately (no email verification needed)
-        let token = null;
-        if (userRole === 'property_manager') {
-            token = generateToken(user._id);
-        }
-
-        res.status(201).json({
+        res.status(200).json({
             success: true,
-            message: userRole === 'property_manager'
-                ? 'Registration successful. Your account is pending admin approval.'
-                : 'Registration successful. Please check your email for verification code.',
-            token: token, // Only property managers get token immediately
-            data: {
-                userId: user._id,
-                email: user.email,
-                name: user.name,
-                role: user.role,
-                isEmailVerified: user.isEmailVerified,
-                approvalStatus: user.approvalStatus,
-                requiresApproval: userRole === 'property_manager' || userRole === 'garbage_collection_company'
-            }
+            count: users.length,
+            data: users
         });
     } catch (error) {
-        console.error('Registration error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Get all users error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
 };
 
-exports.verifyEmail = async (req, res) => {
+// @desc    Get single user
+// @route   GET /api/users/:id
+// @access  Private/Admin
+exports.getUser = async (req, res) => {
     try {
-        const { email, otp } = req.body;
-
-        if (!email || !otp) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide email and OTP'
-            });
-        }
-
-        // Find user and include OTP fields
-        const user = await User.findOne({ email })
-            .select('+emailVerificationOTP +emailVerificationOTPExpires')
+        const user = await User.findById(req.params.id)
+            .select('-password')
             .populate('garbageCollectionProfile');
 
         if (!user) {
@@ -252,309 +40,147 @@ exports.verifyEmail = async (req, res) => {
             });
         }
 
-        // Property managers don't need email verification
-        if (user.role === 'property_manager') {
-            return res.status(400).json({
-                success: false,
-                message: 'Property managers do not require email verification'
-            });
-        }
-
-        if (user.isEmailVerified) {
-            return res.status(400).json({
-                success: false,
-                message: 'Email already verified'
-            });
-        }
-
-        // Verify OTP
-        const isValidOTP = await user.verifyEmailOTP(otp);
-
-        if (!isValidOTP) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid or expired OTP'
-            });
-        }
-
-        // Mark email as verified
-        user.isEmailVerified = true;
-        user.emailVerificationOTP = undefined;
-        user.emailVerificationOTPExpires = undefined;
-        await user.save({ validateBeforeSave: false });
-
-        // Generate token now that email is verified
-        const token = generateToken(user._id);
-
-        // Send notification to admin if user is garbage collection company
-        if (user.role === 'garbage_collection_company') {
-            try {
-                await emailService.sendNewUserApprovalNotificationToAdmin({
-                    name: user.name,
-                    email: user.email,
-                    role: user.role,
-                    phone: user.phone
-                });
-                console.log('Admin notification sent for user approval:', user.email);
-            } catch (emailError) {
-                console.error('Failed to send admin notification:', emailError);
-            }
-        }
-
         res.status(200).json({
             success: true,
-            message: 'Email verified successfully',
-            token,
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-                isEmailVerified: user.isEmailVerified,
-                approvalStatus: user.approvalStatus,
-                garbageCollectionProfile: user.garbageCollectionProfile
-            }
-        });
-    } catch (error) {
-        console.error('Email verification error:', error);
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-exports.resendOTP = async (req, res) => {
-    try {
-        const { email } = req.body;
-
-        if (!email) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide email'
-            });
-        }
-
-        const user = await User.findOne({ email });
-
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        // Property managers don't need email verification
-        if (user.role === 'property_manager') {
-            return res.status(400).json({
-                success: false,
-                message: 'Property managers do not require email verification'
-            });
-        }
-
-        if (user.isEmailVerified) {
-            return res.status(400).json({
-                success: false,
-                message: 'Email already verified'
-            });
-        }
-
-        // Generate new OTP
-        const otp = user.generateEmailVerificationOTP();
-
-        if (!otp) {
-            return res.status(400).json({
-                success: false,
-                message: 'Cannot generate OTP for this user type'
-            });
-        }
-
-        await user.save({ validateBeforeSave: false });
-
-        // Send OTP email
-        try {
-            await emailService.sendEmailVerificationOTP(user.email, {
-                name: user.name,
-                otp: otp
-            });
-            console.log('OTP resent to:', user.email);
-        } catch (emailError) {
-            console.error('Failed to send OTP email:', emailError);
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to send OTP email'
-            });
-        }
-
-        res.status(200).json({
-            success: true,
-            message: 'OTP sent successfully'
-        });
-    } catch (error) {
-        console.error('Resend OTP error:', error);
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-exports.login = async (req, res) => {
-    try {
-        const { email, password } = req.body;
-
-        if (!email || !password) {
-            return res.status(400).json({ success: false, message: 'Please provide email and password' });
-        }
-
-        const user = await User.findOne({ email })
-            .select('+password')
-            .populate('garbageCollectionProfile');
-
-        if (!user || !(await user.matchPassword(password))) {
-            return res.status(401).json({ success: false, message: 'Invalid credentials' });
-        }
-
-        if (!user.isActive) {
-            return res.status(401).json({ success: false, message: 'Account is deactivated' });
-        }
-
-        // Property managers skip email verification, only check approval status
-        if (user.role === 'property_manager') {
-            if (user.approvalStatus === 'pending') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Your account is pending approval. You will be notified once approved.',
-                    approvalStatus: 'pending'
-                });
-            }
-
-            if (user.approvalStatus === 'rejected') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Your account registration was rejected. Please contact support for more information.',
-                    approvalStatus: 'rejected',
-                    approvalNotes: user.approvalNotes
-                });
-            }
-        } else {
-            // Other roles need email verification
-            if (!user.isEmailVerified) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Please verify your email before logging in',
-                    requiresVerification: true
-                });
-            }
-        }
-
-        // Check approval status for garbage collection companies
-        if (user.role === 'garbage_collection_company') {
-            if (user.approvalStatus === 'pending') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Your account is pending approval. You will be notified once approved.',
-                    approvalStatus: 'pending'
-                });
-            }
-
-            if (user.approvalStatus === 'rejected') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Your account registration was rejected. Please contact support for more information.',
-                    approvalStatus: 'rejected',
-                    approvalNotes: user.approvalNotes
-                });
-            }
-        }
-
-        const token = generateToken(user._id);
-
-        res.status(200).json({
-            success: true,
-            token,
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-                isEmailVerified: user.isEmailVerified,
-                approvalStatus: user.approvalStatus,
-                garbageCollectionProfile: user.garbageCollectionProfile
-            }
-        });
-    } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-exports.getMe = async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id).populate('garbageCollectionProfile');
-        res.status(200).json({ success: true, data: user });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// Admin: Approve user (property manager or garbage collection company)
-exports.approveUser = async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const { approvalStatus, approvalNotes } = req.body;
-
-        if (!['approved', 'rejected'].includes(approvalStatus)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid approval status'
-            });
-        }
-
-        const user = await User.findById(userId);
-
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        if (user.role !== 'property_manager' && user.role !== 'garbage_collection_company') {
-            return res.status(400).json({
-                success: false,
-                message: 'This user does not require approval'
-            });
-        }
-
-        user.approvalStatus = approvalStatus;
-        user.approvalNotes = approvalNotes;
-        user.approvedAt = Date.now();
-        user.approvedBy = req.user.id;
-
-        // Verify ID document if approved (only for property managers who have ID documents)
-        if (approvalStatus === 'approved' && user.role === 'property_manager' && user.idDocument) {
-            user.idDocument.isVerified = true;
-            user.idDocument.verifiedAt = Date.now();
-            user.idDocument.verifiedBy = req.user.id;
-        }
-
-        await user.save();
-
-        // Send approval/rejection email
-        try {
-            await emailService.sendUserApprovalNotification(user.email, {
-                name: user.name,
-                approvalStatus: approvalStatus,
-                approvalNotes: approvalNotes,
-                role: user.role
-            });
-            console.log(`Approval notification (${approvalStatus}) sent to:`, user.email);
-        } catch (emailError) {
-            console.error('Failed to send approval notification:', emailError);
-        }
-
-        res.status(200).json({
-            success: true,
-            message: `User ${approvalStatus} successfully`,
             data: user
         });
     } catch (error) {
-        console.error('User approval error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Get user error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// @desc    Update user
+// @route   PUT /api/users/:id
+// @access  Private/Admin
+exports.updateUser = async (req, res) => {
+    try {
+        const { name, email, phone, role, isActive, approvalStatus, approvalNotes } = req.body;
+
+        const user = await User.findById(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // Update fields if provided
+        if (name) user.name = name;
+        if (email) user.email = email;
+        if (phone) user.phone = phone;
+        if (role) user.role = role;
+        if (typeof isActive !== 'undefined') user.isActive = isActive;
+        if (approvalStatus) {
+            user.approvalStatus = approvalStatus;
+            user.approvedAt = Date.now();
+            user.approvedBy = req.user.id;
+        }
+        if (approvalNotes) user.approvalNotes = approvalNotes;
+
+        await user.save();
+
+        // Return user without password
+        const updatedUser = await User.findById(user._id)
+            .select('-password')
+            .populate('garbageCollectionProfile');
+
+        res.status(200).json({
+            success: true,
+            data: updatedUser
+        });
+    } catch (error) {
+        console.error('Update user error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// @desc    Delete user
+// @route   DELETE /api/users/:id
+// @access  Private/Admin
+exports.deleteUser = async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // Prevent admin from deleting themselves
+        if (user._id.toString() === req.user.id) {
+            return res.status(400).json({
+                success: false,
+                message: 'You cannot delete your own account'
+            });
+        }
+
+        await user.deleteOne();
+
+        res.status(200).json({
+            success: true,
+            message: 'User deleted successfully',
+            data: {}
+        });
+    } catch (error) {
+        console.error('Delete user error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// @desc    Toggle user active status
+// @route   PUT /api/users/:id/toggle-status
+// @access  Private/Admin
+exports.toggleUserStatus = async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // Prevent admin from deactivating themselves
+        if (user._id.toString() === req.user.id) {
+            return res.status(400).json({
+                success: false,
+                message: 'You cannot deactivate your own account'
+            });
+        }
+
+        // Toggle the isActive status
+        user.isActive = !user.isActive;
+        await user.save();
+
+        // Return user without password
+        const updatedUser = await User.findById(user._id)
+            .select('-password')
+            .populate('garbageCollectionProfile');
+
+        res.status(200).json({
+            success: true,
+            message: `User ${user.isActive ? 'activated' : 'deactivated'} successfully`,
+            data: updatedUser
+        });
+    } catch (error) {
+        console.error('Toggle user status error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
 };

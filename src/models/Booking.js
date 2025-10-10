@@ -29,21 +29,17 @@ const bookingSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
-    // Cleaning service (optional)
+    // Cleaning service (optional) - no fee charged
     cleaningService: {
         required: {
             type: Boolean,
             default: false
         },
-        fee: {
-            type: Number,
-            default: 0
-        },
         notes: {
             type: String
         }
     },
-    // Total fee including cleaning if applicable
+    // Total fee (only viewing fee)
     totalFee: {
         type: Number,
         default: 0
@@ -68,7 +64,6 @@ const bookingSchema = new mongoose.Schema({
 
 // Calculate viewing fee and total fee before saving
 // 1500 for first 3 properties, 500 for each additional property
-// Add cleaning fee if cleaning service is required
 bookingSchema.pre('save', function (next) {
     // Calculate viewing fee
     if (this.numberOfProperties <= 3) {
@@ -78,11 +73,8 @@ bookingSchema.pre('save', function (next) {
         this.viewingFee = 1500 + (additionalProperties * 500);
     }
 
-    // Calculate total fee (viewing fee + cleaning fee if applicable)
+    // Total fee is just the viewing fee (cleaning is free)
     this.totalFee = this.viewingFee;
-    if (this.cleaningService.required && this.cleaningService.fee > 0) {
-        this.totalFee += this.cleaningService.fee;
-    }
 
     this.updatedAt = Date.now();
     next();
