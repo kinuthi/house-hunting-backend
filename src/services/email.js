@@ -67,7 +67,162 @@ class EmailService {
             throw new Error('Email delivery failed. Check your Brevo configuration.');
         }
     }
+    // Add these methods to your EmailService class in services/email.js
 
+    // Contact form notification to admin
+    async sendContactNotificationToAdmin(contactData) {
+        try {
+            const { name, email, phone, subject, message, contactId } = contactData;
+            const adminEmail = process.env.ADMIN_EMAIL || 'info@househunters.co.ke';
+
+            const content = `
+            <p>Hello Admin,</p>
+            
+            <h2 style="color: #861874;">New Contact Form Submission</h2>
+            
+            <p>You have received a new message through the contact form:</p>
+
+            <div class="info-box">
+                <h3 style="margin-top: 0;">Contact Details</h3>
+                <table>
+                    <tr>
+                        <td>Name:</td>
+                        <td><strong>${name}</strong></td>
+                    </tr>
+                    <tr>
+                        <td>Email:</td>
+                        <td><strong>${email}</strong></td>
+                    </tr>
+                    <tr>
+                        <td>Phone:</td>
+                        <td><strong>${phone}</strong></td>
+                    </tr>
+                    <tr>
+                        <td>Subject:</td>
+                        <td><strong>${subject}</strong></td>
+                    </tr>
+                </table>
+            </div>
+
+            <div class="info-box" style="background-color: #f0f9ff; border-left-color: #1890ff;">
+                <h3 style="margin-top: 0; color: #1890ff;">Message</h3>
+                <p style="white-space: pre-wrap;">${message}</p>
+            </div>
+
+            <div class="divider"></div>
+
+            <p>Please respond to this inquiry as soon as possible.</p>
+
+            <a href="${process.env.CLIENT_URL || 'https://househunters.co.ke'}/admin/contacts/${contactId}" class="button">
+                View in Dashboard
+            </a>
+
+            <div class="divider"></div>
+
+            <p><strong>Quick Reply:</strong></p>
+            <p>Reply directly to this email or contact the customer at:</p>
+            <p>📧 ${email}<br>
+            📞 ${phone}</p>
+        `;
+
+            const htmlContent = this.buildEmailTemplate('New Contact Form Submission', content);
+
+            await this.sendEmail({
+                email: adminEmail,
+                subject: `New Contact: ${subject}`,
+                html: htmlContent,
+                fromEmail: 'noreply@househunters.co.ke',
+                fromName: 'House Hunters Contact Form'
+            });
+
+            console.log('Contact notification sent to admin:', adminEmail);
+            return { success: true };
+        } catch (error) {
+            console.error('Error sending contact notification to admin:', error);
+            throw error;
+        }
+    }
+
+    // Contact form confirmation to customer
+    async sendContactConfirmationToCustomer(email, contactData) {
+        try {
+            const { name, subject } = contactData;
+
+            const content = `
+            <p>Dear ${name},</p>
+            
+            <h2 style="color: #861874;">Thank You for Contacting Us! 📧</h2>
+            
+            <p>We have received your message and one of our team members will get back to you as soon as possible.</p>
+
+            <div class="info-box">
+                <h3 style="margin-top: 0;">Your Message Details</h3>
+                <table>
+                    <tr>
+                        <td>Subject:</td>
+                        <td><strong>${subject}</strong></td>
+                    </tr>
+                    <tr>
+                        <td>Received:</td>
+                        <td>${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                    </tr>
+                </table>
+            </div>
+
+            <div class="info-box" style="background-color: #e6f7ff; border-left-color: #1890ff;">
+                <h3 style="margin-top: 0; color: #1890ff;">⏰ Response Time</h3>
+                <p>Our team typically responds within <strong>24-48 hours</strong> during business hours.</p>
+                <p><strong>Business Hours:</strong><br>
+                Monday - Friday: 9:00 AM - 6:00 PM<br>
+                Saturday: 10:00 AM - 4:00 PM<br>
+                Sunday: Closed</p>
+            </div>
+
+            <div class="divider"></div>
+
+            <h3>Need Immediate Assistance?</h3>
+            <p>If your inquiry is urgent, you can reach us directly at:</p>
+            <p>📞 <strong>Phone:</strong> +254 710 199 669<br>
+            📧 <strong>Email:</strong> info@househunters.co.ke<br>
+            📍 <strong>Location:</strong> Nairobi, Kenya</p>
+
+            <div class="divider"></div>
+
+            <h3>While You Wait...</h3>
+            <p>Explore our services and offerings:</p>
+            <p>🏠 Browse available properties<br>
+            📅 Book property viewings<br>
+            ♻️ Connect with garbage collection services</p>
+
+            <a href="${process.env.CLIENT_URL || 'https://househunters.co.ke'}" class="button">
+                Visit Our Website
+            </a>
+
+            <div class="divider"></div>
+
+            <p>Thank you for choosing House Hunters!</p>
+            
+            <p>Best regards,<br>
+            <strong>The House Hunters Team</strong></p>
+        `;
+
+            const htmlContent = this.buildEmailTemplate('We Received Your Message - House Hunters', content);
+
+            await this.sendEmail({
+                email: email,
+                subject: 'Thank You for Contacting House Hunters',
+                html: htmlContent,
+                fromEmail: 'info@househunters.co.ke',
+                fromName: 'House Hunters Support'
+            });
+
+            console.log('Contact confirmation sent to customer:', email);
+            return { success: true };
+        } catch (error) {
+            console.error('Error sending contact confirmation to customer:', error);
+            throw error;
+        }
+    }
     // Simple HTML email template builder
     buildEmailTemplate(title, content, footerText = null) {
         return `

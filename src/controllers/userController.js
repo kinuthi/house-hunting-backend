@@ -1,25 +1,32 @@
 const User = require('../models/User');
-const GarbageCollectionCompany = require('../models/GarbageCollectionCompany');
 
+// @desc    Get all users
+// @route   GET /api/users
+// @access  Private/Admin
 exports.getAllUsers = async (req, res) => {
     try {
-        const { role } = req.query;
-        let query = {};
-
-        if (role) {
-            query.role = role;
-        }
-
-        const users = await User.find(query)
+        const users = await User.find()
             .select('-password')
-            .populate('garbageCollectionProfile');
+            .populate('garbageCollectionProfile')
+            .sort('-createdAt');
 
-        res.status(200).json({ success: true, count: users.length, data: users });
+        res.status(200).json({
+            success: true,
+            count: users.length,
+            data: users
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Get all users error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
 };
 
+// @desc    Get single user
+// @route   GET /api/users/:id
+// @access  Private/Admin
 exports.getUser = async (req, res) => {
     try {
         const user = await User.findById(req.params.id)
@@ -27,76 +34,153 @@ exports.getUser = async (req, res) => {
             .populate('garbageCollectionProfile');
 
         if (!user) {
-            return res.status(404).json({ success: false, message: 'User not found' });
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
         }
 
-        res.status(200).json({ success: true, data: user });
+        res.status(200).json({
+            success: true,
+            data: user
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Get user error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
 };
 
+// @desc    Update user
+// @route   PUT /api/users/:id
+// @access  Private/Admin
 exports.updateUser = async (req, res) => {
     try {
-        const { password, role, ...updateData } = req.body;
+        const { name, email, phone, role, isActive, approvalStatus, approvalNotes } = req.body;
 
-        const user = await User.findByIdAndUpdate(
-            req.params.id,
-            updateData,
-            { new: true, runValidators: true }
-        ).select('-password').populate('garbageCollectionProfile');
+        const user = await User.findById(req.params.id);
 
         if (!user) {
-            return res.status(404).json({ success: false, message: 'User not found' });
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
         }
 
-        res.status(200).json({ success: true, data: user });
+        // Update fields if provided
+        if (name) user.name = name;
+        if (email) user.email = email;
+        if (phone) user.phone = phone;
+        if (role) user.role = role;
+        if (typeof isActive !== 'undefined') user.isActive = isActive;
+        if (approvalStatus) {
+            user.approvalStatus = approvalStatus;
+            user.approvedAt = Date.now();
+            user.approvedBy = req.user.id;
+        }
+        if (approvalNotes) user.approvalNotes = approvalNotes;
+
+        await user.save();
+
+        // Return user without password
+        const updatedUser = await User.findById(user._id)
+            .select('-password')
+            .populate('garbageCollectionProfile');
+
+        res.status(200).json({
+            success: true,
+            data: updatedUser
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Update user error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
 };
 
+// @desc    Delete user
+// @route   DELETE /api/users/:id
+// @access  Private/Admin
 exports.deleteUser = async (req, res) => {
     try {
         const user = await User.findById(req.params.id);
 
         if (!user) {
-            return res.status(404).json({ success: false, message: 'User not found' });
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
         }
 
-        // If user is a garbage collection company, delete their profile too
-        if (user.role === 'garbage_collection_company' && user.garbageCollectionProfile) {
-            await GarbageCollectionCompany.findByIdAndDelete(user.garbageCollectionProfile);
+        // Prevent admin from deleting themselves
+        if (user._id.toString() === req.user.id) {
+            return res.status(400).json({
+                success: false,
+                message: 'You cannot delete your own account'
+            });
         }
 
         await user.deleteOne();
-        res.status(200).json({ success: true, data: {} });
+
+        res.status(200).json({
+            success: true,
+            message: 'User deleted successfully',
+            data: {}
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Delete user error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
 };
 
+// @desc    Toggle user active status
+// @route   PUT /api/users/:id/toggle-status
+// @access  Private/Admin
 exports.toggleUserStatus = async (req, res) => {
     try {
-        const user = await User.findById(req.params.id).select('-password');
+        const user = await User.findById(req.params.id);
 
         if (!user) {
-            return res.status(404).json({ success: false, message: 'User not found' });
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
         }
 
+        // Prevent admin from deactivating themselves
+        if (user._id.toString() === req.user.id) {
+            return res.status(400).json({
+                success: false,
+                message: 'You cannot deactivate your own account'
+            });
+        }
+
+        // Toggle the isActive status
         user.isActive = !user.isActive;
         await user.save();
 
-        // If it's a garbage collection company, update their profile status too
-        if (user.role === 'garbage_collection_company' && user.garbageCollectionProfile) {
-            await GarbageCollectionCompany.findByIdAndUpdate(
-                user.garbageCollectionProfile,
-                { isActive: user.isActive }
-            );
-        }
+        // Return user without password
+        const updatedUser = await User.findById(user._id)
+            .select('-password')
+            .populate('garbageCollectionProfile');
 
-        res.status(200).json({ success: true, data: user });
+        res.status(200).json({
+            success: true,
+            message: `User ${user.isActive ? 'activated' : 'deactivated'} successfully`,
+            data: updatedUser
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Toggle user status error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
 };

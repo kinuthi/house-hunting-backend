@@ -35,31 +35,31 @@ const userSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'GarbageCollectionCompany'
     },
-    // ID document verification for property managers and garbage collection companies
+    // ID document verification only for property managers (removed for garbage_collection_company)
     idDocument: {
         front: {
             type: String, // URL to front of ID
             required: function () {
-                return this.role === 'property_manager' || this.role === 'garbage_collection_company';
+                return this.role === 'property_manager';
             }
         },
         back: {
             type: String, // URL to back of ID
             required: function () {
-                return this.role === 'property_manager' || this.role === 'garbage_collection_company';
+                return this.role === 'property_manager';
             }
         },
         idNumber: {
             type: String,
             required: function () {
-                return this.role === 'property_manager' || this.role === 'garbage_collection_company';
+                return this.role === 'property_manager';
             }
         },
         idType: {
             type: String,
             enum: ['national_id', 'passport', 'drivers_license'],
             required: function () {
-                return this.role === 'property_manager' || this.role === 'garbage_collection_company';
+                return this.role === 'property_manager';
             }
         },
         isVerified: {
@@ -72,10 +72,13 @@ const userSchema = new mongoose.Schema({
             ref: 'User'
         }
     },
-    // Email verification fields
+    // Email verification fields (only for customers and admins, not property_manager)
     isEmailVerified: {
         type: Boolean,
-        default: false
+        default: function () {
+            // Auto-verify property managers - they go through approval process instead
+            return this.role === 'property_manager';
+        }
     },
     emailVerificationOTP: {
         type: String,
@@ -124,8 +127,13 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
     return await bcrypt.compare(enteredPassword, this.password);
 };
 
-// Generate email verification OTP
+// Generate email verification OTP (only used for customers and admins)
 userSchema.methods.generateEmailVerificationOTP = function () {
+    // Skip OTP generation for property managers
+    if (this.role === 'property_manager') {
+        return null;
+    }
+
     // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 

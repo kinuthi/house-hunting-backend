@@ -38,26 +38,26 @@ exports.register = async (req, res) => {
         const allowedRoles = ['customer', 'property_manager', 'garbage_collection_company'];
         const userRole = allowedRoles.includes(role) ? role : 'customer';
 
-        // Validate ID documents for property managers and garbage collection companies
-        if (userRole === 'property_manager' || userRole === 'garbage_collection_company') {
+        // Validate ID documents ONLY for property managers
+        if (userRole === 'property_manager') {
             if (!req.files || !req.files.idFront || !req.files.idBack) {
                 return res.status(400).json({
                     success: false,
-                    message: 'ID document front and back images are required for verification'
+                    message: 'ID document front and back images are required for property manager verification'
                 });
             }
 
             if (!idNumber || !idType) {
                 return res.status(400).json({
                     success: false,
-                    message: 'ID number and ID type are required'
+                    message: 'ID number and ID type are required for property managers'
                 });
             }
         }
 
-        // Upload ID documents if required
+        // Upload ID documents ONLY for property managers
         let idDocumentData = null;
-        if (userRole === 'property_manager' || userRole === 'garbage_collection_company') {
+        if (userRole === 'property_manager') {
             try {
                 const idFrontFile = req.files.idFront[0];
                 const idBackFile = req.files.idBack[0];
@@ -92,8 +92,8 @@ exports.register = async (req, res) => {
 
                 // Extract only the URL strings from the upload results
                 idDocumentData = {
-                    front: idFrontResult.data.url,      // Extract just the URL string
-                    back: idBackResult.data.url,         // Extract just the URL string
+                    front: idFrontResult.data.url,
+                    back: idBackResult.data.url,
                     idNumber: idNumber,
                     idType: idType,
                     isVerified: false
@@ -118,7 +118,7 @@ exports.register = async (req, res) => {
             role: userRole
         };
 
-        // Add ID document data if available
+        // Add ID document data if available (only for property managers)
         if (idDocumentData) {
             userData.idDocument = idDocumentData;
         }
@@ -130,27 +130,9 @@ exports.register = async (req, res) => {
 
         console.log('User created successfully:', user._id);
 
-        // Generate OTP for email verification
-        const otp = user.generateEmailVerificationOTP();
-        await user.save({ validateBeforeSave: false });
-
-        console.log('OTP generated for user:', user.email);
-
         // If registering as garbage collection company, create their profile
         if (userRole === 'garbage_collection_company') {
             if (!garbageCollectionData) {
-                // Clean up uploaded documents
-                if (idDocumentData) {
-                    try {
-                        // Extract key from URL for deletion
-                        const frontKey = idDocumentData.front.split('.com/')[1];
-                        const backKey = idDocumentData.back.split('.com/')[1];
-                        await deleteFromSpaces(frontKey);
-                        await deleteFromSpaces(backKey);
-                    } catch (deleteError) {
-                        console.error('Error deleting uploaded files:', deleteError);
-                    }
-                }
                 await user.deleteOne();
                 return res.status(400).json({
                     success: false,
@@ -170,16 +152,25 @@ exports.register = async (req, res) => {
             console.log('Garbage collection company profile created:', garbageCompany._id);
         }
 
-        // Send OTP verification email
-        try {
-            await emailService.sendEmailVerificationOTP(user.email, {
-                name: user.name,
-                otp: otp
-            });
-            console.log('OTP email sent to:', user.email);
-        } catch (emailError) {
-            console.error('Failed to send OTP email:', emailError);
-            // Don't fail registration if email fails
+        // Generate OTP for email verification (only for customers, not property managers)
+        let otp = null;
+        if (userRole !== 'property_manager') {
+            otp = user.generateEmailVerificationOTP();
+            if (otp) {
+                await user.save({ validateBeforeSave: false });
+                console.log('OTP generated for user:', user.email);
+
+                // Send OTP verification email
+                try {
+                    await emailService.sendEmailVerificationOTP(user.email, {
+                        name: user.name,
+                        otp: otp
+                    });
+                    console.log('OTP email sent to:', user.email);
+                } catch (emailError) {
+                    console.error('Failed to send OTP email:', emailError);
+                }
+            }
         }
 
         // Send welcome email
@@ -194,10 +185,34 @@ exports.register = async (req, res) => {
             console.error('Failed to send welcome email:', emailError);
         }
 
-        // Don't generate token yet - user needs to verify email first
+        // Send notification to admin if user is property manager or garbage collection company
+        if (userRole === 'property_manager' || userRole === 'garbage_collection_company') {
+            try {
+                await emailService.sendNewUserApprovalNotificationToAdmin({
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    phone: user.phone,
+                    idDocument: user.idDocument
+                });
+                console.log('Admin notification sent for user approval:', user.email);
+            } catch (emailError) {
+                console.error('Failed to send admin notification:', emailError);
+            }
+        }
+
+        // For property managers, generate token immediately (no email verification needed)
+        let token = null;
+        if (userRole === 'property_manager') {
+            token = generateToken(user._id);
+        }
+
         res.status(201).json({
             success: true,
-            message: 'Registration successful. Please check your email for verification code.',
+            message: userRole === 'property_manager'
+                ? 'Registration successful. Your account is pending admin approval.'
+                : 'Registration successful. Please check your email for verification code.',
+            token: token, // Only property managers get token immediately
             data: {
                 userId: user._id,
                 email: user.email,
@@ -237,6 +252,14 @@ exports.verifyEmail = async (req, res) => {
             });
         }
 
+        // Property managers don't need email verification
+        if (user.role === 'property_manager') {
+            return res.status(400).json({
+                success: false,
+                message: 'Property managers do not require email verification'
+            });
+        }
+
         if (user.isEmailVerified) {
             return res.status(400).json({
                 success: false,
@@ -263,15 +286,14 @@ exports.verifyEmail = async (req, res) => {
         // Generate token now that email is verified
         const token = generateToken(user._id);
 
-        // Send notification to admin if user is property manager or garbage collection company
-        if (user.role === 'property_manager' || user.role === 'garbage_collection_company') {
+        // Send notification to admin if user is garbage collection company
+        if (user.role === 'garbage_collection_company') {
             try {
                 await emailService.sendNewUserApprovalNotificationToAdmin({
                     name: user.name,
                     email: user.email,
                     role: user.role,
-                    phone: user.phone,
-                    idDocument: user.idDocument
+                    phone: user.phone
                 });
                 console.log('Admin notification sent for user approval:', user.email);
             } catch (emailError) {
@@ -319,6 +341,14 @@ exports.resendOTP = async (req, res) => {
             });
         }
 
+        // Property managers don't need email verification
+        if (user.role === 'property_manager') {
+            return res.status(400).json({
+                success: false,
+                message: 'Property managers do not require email verification'
+            });
+        }
+
         if (user.isEmailVerified) {
             return res.status(400).json({
                 success: false,
@@ -328,6 +358,14 @@ exports.resendOTP = async (req, res) => {
 
         // Generate new OTP
         const otp = user.generateEmailVerificationOTP();
+
+        if (!otp) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cannot generate OTP for this user type'
+            });
+        }
+
         await user.save({ validateBeforeSave: false });
 
         // Send OTP email
@@ -375,32 +413,53 @@ exports.login = async (req, res) => {
             return res.status(401).json({ success: false, message: 'Account is deactivated' });
         }
 
-        if (!user.isEmailVerified) {
-            return res.status(401).json({
-                success: false,
-                message: 'Please verify your email before logging in',
-                requiresVerification: true
-            });
+        // Property managers skip email verification, only check approval status
+        if (user.role === 'property_manager') {
+            if (user.approvalStatus === 'pending') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Your account is pending approval. You will be notified once approved.',
+                    approvalStatus: 'pending'
+                });
+            }
+
+            if (user.approvalStatus === 'rejected') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Your account registration was rejected. Please contact support for more information.',
+                    approvalStatus: 'rejected',
+                    approvalNotes: user.approvalNotes
+                });
+            }
+        } else {
+            // Other roles need email verification
+            if (!user.isEmailVerified) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Please verify your email before logging in',
+                    requiresVerification: true
+                });
+            }
         }
 
-        // Check approval status for property managers and garbage collection companies
-        if ((user.role === 'property_manager' || user.role === 'garbage_collection_company')
-            && user.approvalStatus === 'pending') {
-            return res.status(403).json({
-                success: false,
-                message: 'Your account is pending approval. You will be notified once approved.',
-                approvalStatus: 'pending'
-            });
-        }
+        // Check approval status for garbage collection companies
+        if (user.role === 'garbage_collection_company') {
+            if (user.approvalStatus === 'pending') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Your account is pending approval. You will be notified once approved.',
+                    approvalStatus: 'pending'
+                });
+            }
 
-        if ((user.role === 'property_manager' || user.role === 'garbage_collection_company')
-            && user.approvalStatus === 'rejected') {
-            return res.status(403).json({
-                success: false,
-                message: 'Your account registration was rejected. Please contact support for more information.',
-                approvalStatus: 'rejected',
-                approvalNotes: user.approvalNotes
-            });
+            if (user.approvalStatus === 'rejected') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Your account registration was rejected. Please contact support for more information.',
+                    approvalStatus: 'rejected',
+                    approvalNotes: user.approvalNotes
+                });
+            }
         }
 
         const token = generateToken(user._id);
@@ -467,8 +526,8 @@ exports.approveUser = async (req, res) => {
         user.approvedAt = Date.now();
         user.approvedBy = req.user.id;
 
-        // Verify ID document if approved
-        if (approvalStatus === 'approved') {
+        // Verify ID document if approved (only for property managers who have ID documents)
+        if (approvalStatus === 'approved' && user.role === 'property_manager' && user.idDocument) {
             user.idDocument.isVerified = true;
             user.idDocument.verifiedAt = Date.now();
             user.idDocument.verifiedBy = req.user.id;

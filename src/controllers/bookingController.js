@@ -28,11 +28,10 @@ exports.createBooking = async (req, res) => {
             numberOfProperties: numberOfProperties || 1
         };
 
-        // Add cleaning service if provided
+        // Add cleaning service if provided (no fee)
         if (cleaningService) {
             bookingData.cleaningService = {
                 required: cleaningService.required || false,
-                fee: cleaningService.fee || 0,
                 notes: cleaningService.notes || ''
             };
         }
@@ -43,14 +42,14 @@ exports.createBooking = async (req, res) => {
             .populate('property')
             .populate('customer', 'name email phone');
 
-        // Create payment record for viewing fee (and cleaning fee if applicable)
+        // Create payment record for viewing fee only
         await Payment.create({
             paymentType: 'viewing_fee',
             booking: booking._id,
             property: propertyExists._id,
             customer: req.user.id,
             numberOfProperties: booking.numberOfProperties,
-            totalAmount: booking.totalFee // Use totalFee which includes cleaning fee
+            totalAmount: booking.totalFee // totalFee now only includes viewing fee
         });
 
         res.status(201).json({ success: true, data: populatedBooking });
@@ -147,7 +146,6 @@ exports.updateBooking = async (req, res) => {
         if (cleaningService !== undefined) {
             updateData.cleaningService = {
                 required: cleaningService.required || false,
-                fee: cleaningService.fee || 0,
                 notes: cleaningService.notes || ''
             };
         }
@@ -164,7 +162,7 @@ exports.updateBooking = async (req, res) => {
                 { booking: booking._id, paymentType: 'viewing_fee' },
                 {
                     numberOfProperties: booking.numberOfProperties,
-                    totalAmount: booking.totalFee
+                    totalAmount: booking.totalFee // totalFee only includes viewing fee
                 }
             );
         }
