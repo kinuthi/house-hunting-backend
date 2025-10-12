@@ -29,8 +29,8 @@ const bookingSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
-    // Cleaning service (optional) - no fee charged
-    cleaningService: {
+    // Move-in cleaning service (optional, paid service)
+    moveInCleaningService: {
         required: {
             type: Boolean,
             default: false
@@ -39,7 +39,7 @@ const bookingSchema = new mongoose.Schema({
             type: String
         }
     },
-    // Total fee (only viewing fee)
+    // Total fee (only viewing fee, cleaning is separate/optional paid service)
     totalFee: {
         type: Number,
         default: 0
@@ -63,17 +63,31 @@ const bookingSchema = new mongoose.Schema({
 });
 
 // Calculate viewing fee and total fee before saving
-// 1500 for first 3 properties, 500 for each additional property
+// First 3 properties: 1500 KES
+// Every additional 3 properties: 500 KES
+// Examples:
+// 1-3 properties = 1500 KES
+// 4-6 properties = 1500 + 500 = 2000 KES
+// 7-9 properties = 1500 + 500 + 500 = 2500 KES
 bookingSchema.pre('save', function (next) {
     // Calculate viewing fee
     if (this.numberOfProperties <= 3) {
+        // First 3 properties cost 1500 KES
         this.viewingFee = 1500;
     } else {
+        // Additional properties after first 3
         const additionalProperties = this.numberOfProperties - 3;
-        this.viewingFee = 1500 + (additionalProperties * 500);
+
+        // Calculate how many sets of 3 additional properties
+        // Math.ceil ensures we charge for partial sets too
+        const additionalSetsOf3 = Math.ceil(additionalProperties / 3);
+
+        // 1500 for first 3 + (500 per each set of 3 additional)
+        this.viewingFee = 1500 + (additionalSetsOf3 * 500);
     }
 
-    // Total fee is just the viewing fee (cleaning is free)
+    // Total fee is just the viewing fee
+    // Move-in cleaning is a separate paid service handled elsewhere
     this.totalFee = this.viewingFee;
 
     this.updatedAt = Date.now();
