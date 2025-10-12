@@ -10,7 +10,7 @@ exports.createBooking = async (req, res) => {
             visitTime,
             notes,
             numberOfProperties,
-            cleaningService
+            moveInCleaningService
         } = req.body;
 
         const propertyExists = await Property.findById(property);
@@ -28,11 +28,11 @@ exports.createBooking = async (req, res) => {
             numberOfProperties: numberOfProperties || 1
         };
 
-        // Add cleaning service if provided (no fee)
-        if (cleaningService) {
-            bookingData.cleaningService = {
-                required: cleaningService.required || false,
-                notes: cleaningService.notes || ''
+        // Add move-in cleaning service if provided
+        if (moveInCleaningService) {
+            bookingData.moveInCleaningService = {
+                required: moveInCleaningService.required || false,
+                notes: moveInCleaningService.notes || ''
             };
         }
 
@@ -40,7 +40,7 @@ exports.createBooking = async (req, res) => {
 
         const populatedBooking = await Booking.findById(booking._id)
             .populate('property')
-            .populate('customer', 'name email phone');
+            .populate('customer', 'name phone');
 
         // Create payment record for viewing fee only
         await Payment.create({
@@ -49,7 +49,7 @@ exports.createBooking = async (req, res) => {
             property: propertyExists._id,
             customer: req.user.id,
             numberOfProperties: booking.numberOfProperties,
-            totalAmount: booking.totalFee // totalFee now only includes viewing fee
+            totalAmount: booking.totalFee // totalFee only includes viewing fee
         });
 
         res.status(201).json({ success: true, data: populatedBooking });
@@ -73,7 +73,7 @@ exports.getBookings = async (req, res) => {
 
         const bookings = await Booking.find(query)
             .populate('property')
-            .populate('customer', 'name email phone')
+            .populate('customer', 'name phone')
             .sort('-createdAt');
 
         res.status(200).json({ success: true, count: bookings.length, data: bookings });
@@ -86,7 +86,7 @@ exports.getBooking = async (req, res) => {
     try {
         const booking = await Booking.findById(req.params.id)
             .populate('property')
-            .populate('customer', 'name email phone');
+            .populate('customer', 'name phone');
 
         if (!booking) {
             return res.status(404).json({ success: false, message: 'Booking not found' });
@@ -116,7 +116,7 @@ exports.updateBooking = async (req, res) => {
             visitTime,
             notes,
             numberOfProperties,
-            cleaningService
+            moveInCleaningService
         } = req.body;
 
         let booking = await Booking.findById(req.params.id).populate('property');
@@ -143,10 +143,10 @@ exports.updateBooking = async (req, res) => {
         if (visitTime) updateData.visitTime = visitTime;
         if (notes !== undefined) updateData.notes = notes;
         if (numberOfProperties) updateData.numberOfProperties = numberOfProperties;
-        if (cleaningService !== undefined) {
-            updateData.cleaningService = {
-                required: cleaningService.required || false,
-                notes: cleaningService.notes || ''
+        if (moveInCleaningService !== undefined) {
+            updateData.moveInCleaningService = {
+                required: moveInCleaningService.required || false,
+                notes: moveInCleaningService.notes || ''
             };
         }
 
@@ -154,10 +154,10 @@ exports.updateBooking = async (req, res) => {
             req.params.id,
             updateData,
             { new: true, runValidators: true }
-        ).populate('property').populate('customer', 'name email phone');
+        ).populate('property').populate('customer', 'name phone');
 
         // Update payment record if booking details changed
-        if (numberOfProperties || cleaningService !== undefined) {
+        if (numberOfProperties || moveInCleaningService !== undefined) {
             await Payment.findOneAndUpdate(
                 { booking: booking._id, paymentType: 'viewing_fee' },
                 {
@@ -200,7 +200,7 @@ exports.updateBookingStatus = async (req, res) => {
             req.params.id,
             { status },
             { new: true, runValidators: true }
-        ).populate('property').populate('customer', 'name email phone');
+        ).populate('property').populate('customer', 'name phone');
 
         res.status(200).json({ success: true, data: booking });
     } catch (error) {

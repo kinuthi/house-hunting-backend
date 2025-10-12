@@ -3,6 +3,7 @@ const {
     createBooking,
     getBookings,
     getBooking,
+    updateBooking,
     updateBookingStatus
 } = require('../controllers/bookingController');
 const { protect, authorize } = require('../middleware/auth');
@@ -15,6 +16,9 @@ router.route('/')
 
 router.route('/:id')
     .get(protect, getBooking)
+    .put(protect, authorize('customer'), updateBooking);
+
+router.route('/:id/status')
     .put(protect, authorize('admin', 'property_manager', 'customer'), updateBookingStatus);
 
 module.exports = router;
