@@ -58,7 +58,7 @@ exports.getUser = async (req, res) => {
 // @access  Private/Admin
 exports.updateUser = async (req, res) => {
     try {
-        const { name, email, phone, role, isActive, approvalStatus, approvalNotes } = req.body;
+        const { name, phone, role, isActive, approvalStatus, approvalNotes } = req.body;
 
         const user = await User.findById(req.params.id);
 
@@ -71,7 +71,6 @@ exports.updateUser = async (req, res) => {
 
         // Update fields if provided
         if (name) user.name = name;
-        if (email) user.email = email;
         if (phone) user.phone = phone;
         if (role) user.role = role;
         if (typeof isActive !== 'undefined') user.isActive = isActive;

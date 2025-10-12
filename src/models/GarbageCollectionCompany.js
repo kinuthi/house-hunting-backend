@@ -12,16 +12,10 @@ const garbageCollectionCompanySchema = new mongoose.Schema({
         required: [true, 'Please add registration number'],
         unique: true
     },
-    email: {
-        type: String,
-        required: [true, 'Please add an email'],
-        unique: true,
-        lowercase: true,
-        match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please add a valid email']
-    },
     phone: {
         type: String,
         required: [true, 'Please add a phone number'],
+        unique: true,
         trim: true
     },
     contactPerson: {
@@ -29,8 +23,7 @@ const garbageCollectionCompanySchema = new mongoose.Schema({
             type: String,
             required: true
         },
-        phone: String,
-        email: String
+        phone: String
     },
     address: {
         street: String,
