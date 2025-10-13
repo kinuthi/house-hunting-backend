@@ -39,7 +39,54 @@ const bookingSchema = new mongoose.Schema({
             type: String
         }
     },
-    // Total fee (only viewing fee, cleaning is separate/optional paid service)
+    // Moving service (optional, paid service)
+    movingService: {
+        required: {
+            type: Boolean,
+            default: false
+        },
+        moverBooking: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'MoverBooking'
+        },
+        moveDate: {
+            type: Date
+        },
+        moveTime: {
+            type: String
+        },
+        pickupAddress: {
+            street: String,
+            city: String,
+            state: String,
+            country: String,
+            zipCode: String,
+            floor: String,
+            hasElevator: Boolean
+        },
+        propertySize: {
+            type: String,
+            enum: ['studio', '1_bedroom', '2_bedroom', '3_bedroom', '4_bedroom', '5+_bedroom', 'small_office', 'medium_office', 'large_office']
+        },
+        vehicleRequired: {
+            type: String,
+            enum: ['small_van', 'medium_truck', 'large_truck', 'extra_large_truck']
+        },
+        additionalServices: [{
+            name: {
+                type: String,
+                enum: ['packing', 'unpacking', 'assembly', 'disassembly', 'storage', 'cleaning']
+            },
+            price: Number
+        }],
+        estimatedCost: {
+            type: Number,
+            default: 0
+        },
+        specialInstructions: String,
+        notes: String
+    },
+    // Total fee (only viewing fee, cleaning and moving are separate/optional paid services)
     totalFee: {
         type: Number,
         default: 0
@@ -87,7 +134,7 @@ bookingSchema.pre('save', function (next) {
     }
 
     // Total fee is just the viewing fee
-    // Move-in cleaning is a separate paid service handled elsewhere
+    // Move-in cleaning and moving service are separate paid services handled elsewhere
     this.totalFee = this.viewingFee;
 
     this.updatedAt = Date.now();

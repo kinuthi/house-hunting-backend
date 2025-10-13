@@ -8,6 +8,7 @@ exports.getAllUsers = async (req, res) => {
         const users = await User.find()
             .select('-password')
             .populate('garbageCollectionProfile')
+            .populate('moverCompanyProfile')
             .sort('-createdAt');
 
         res.status(200).json({
@@ -31,7 +32,8 @@ exports.getUser = async (req, res) => {
     try {
         const user = await User.findById(req.params.id)
             .select('-password')
-            .populate('garbageCollectionProfile');
+            .populate('garbageCollectionProfile')
+            .populate('moverCompanyProfile');
 
         if (!user) {
             return res.status(404).json({
@@ -86,7 +88,8 @@ exports.updateUser = async (req, res) => {
         // Return user without password
         const updatedUser = await User.findById(user._id)
             .select('-password')
-            .populate('garbageCollectionProfile');
+            .populate('garbageCollectionProfile')
+            .populate('moverCompanyProfile');
 
         res.status(200).json({
             success: true,
@@ -168,7 +171,8 @@ exports.toggleUserStatus = async (req, res) => {
         // Return user without password
         const updatedUser = await User.findById(user._id)
             .select('-password')
-            .populate('garbageCollectionProfile');
+            .populate('garbageCollectionProfile')
+            .populate('moverCompanyProfile');
 
         res.status(200).json({
             success: true,

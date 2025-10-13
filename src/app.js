@@ -10,6 +10,8 @@ const settingsRoutes = require('./routes/settings');
 const garbageBookingRoutes = require('./routes/garbageBookings');
 const garbageCompanyRoutes = require('./routes/garbageCollection');
 const contactRoutes = require('./routes/contact');
+const moverCompanyRoutes = require('./routes/moverCompany');
+const moverBookingRoutes = require('./routes/moverBooking');
 
 const app = express();
 
@@ -46,6 +48,8 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/garbage-bookings', garbageBookingRoutes);
 app.use('/api/garbage-companies', garbageCompanyRoutes);
 app.use('/api/contacts', contactRoutes);
+app.use('/api/mover-companies', moverCompanyRoutes);
+app.use('/api/mover-bookings', moverBookingRoutes);
 
 // 404 handler
 app.use((req, res, next) => {

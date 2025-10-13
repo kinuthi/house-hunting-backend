@@ -21,7 +21,7 @@ const userSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['admin', 'property_manager', 'customer', 'garbage_collection_company'],
+        enum: ['admin', 'property_manager', 'customer', 'garbage_collection_company', 'mover_company'],
         default: 'customer'
     },
     // Reference to garbage collection company profile if role is garbage_collection_company
@@ -29,31 +29,36 @@ const userSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'GarbageCollectionCompany'
     },
-    // ID document verification only for property managers
+    // Reference to mover company profile if role is mover_company
+    moverCompanyProfile: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'MoverCompany'
+    },
+    // ID document verification for property managers and mover companies
     idDocument: {
         front: {
             type: String, // URL to front of ID
             required: function () {
-                return this.role === 'property_manager';
+                return this.role === 'property_manager' || this.role === 'mover_company';
             }
         },
         back: {
             type: String, // URL to back of ID
             required: function () {
-                return this.role === 'property_manager';
+                return this.role === 'property_manager' || this.role === 'mover_company';
             }
         },
         idNumber: {
             type: String,
             required: function () {
-                return this.role === 'property_manager';
+                return this.role === 'property_manager' || this.role === 'mover_company';
             }
         },
         idType: {
             type: String,
             enum: ['national_id', 'passport', 'drivers_license'],
             required: function () {
-                return this.role === 'property_manager';
+                return this.role === 'property_manager' || this.role === 'mover_company';
             }
         },
         isVerified: {
@@ -71,15 +76,11 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
-    // Account approval status (for property managers and garbage collection companies)
+    // Account approval status (for property managers, garbage collection companies, and mover companies)
     approvalStatus: {
         type: String,
         enum: ['pending', 'approved', 'rejected'],
-        default: function () {
-            return (this.role === 'property_manager' || this.role === 'garbage_collection_company')
-                ? 'pending'
-                : 'approved';
-        }
+        default: 'approved'
     },
     approvalNotes: String,
     approvedAt: Date,
