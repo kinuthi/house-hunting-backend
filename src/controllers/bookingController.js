@@ -176,7 +176,10 @@ exports.updateBooking = async (req, res) => {
         if (visitTime) updateData.visitTime = visitTime;
         if (notes !== undefined) updateData.notes = notes;
         if (numberOfProperties) updateData.numberOfProperties = numberOfProperties;
+<<<<<<< HEAD
 
+=======
+>>>>>>> a716c5145d34b4b40c4042dbf18903fbe3e01e9f
         if (moveInCleaningService !== undefined) {
             updateData.moveInCleaningService = {
                 required: moveInCleaningService.required || false,
