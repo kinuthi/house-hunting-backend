@@ -21,7 +21,6 @@ exports.createBooking = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Property not found' });
         }
 
-        // Prepare booking data
         const bookingData = {
             property,
             customer: req.user.id,
@@ -31,17 +30,16 @@ exports.createBooking = async (req, res) => {
             numberOfProperties: numberOfProperties || 1
         };
 
-        // Add move-in cleaning service if provided
         if (moveInCleaningService) {
             bookingData.moveInCleaningService = {
                 required: moveInCleaningService.required || false,
+                cleaningDate: moveInCleaningService.cleaningDate,
+                cleaningTime: moveInCleaningService.cleaningTime,
                 notes: moveInCleaningService.notes || ''
             };
         }
 
-        // Add moving service if provided
         if (movingService && movingService.required) {
-            // Validate mover company if moving service is requested
             if (movingService.moverCompany) {
                 const moverCompany = await MoverCompany.findById(movingService.moverCompany);
                 if (!moverCompany || !moverCompany.isActive) {
@@ -72,14 +70,13 @@ exports.createBooking = async (req, res) => {
             .populate('property')
             .populate('customer', 'name phone');
 
-        // Create payment record for viewing fee only
         await Payment.create({
             paymentType: 'viewing_fee',
             booking: booking._id,
             property: propertyExists._id,
             customer: req.user.id,
             numberOfProperties: booking.numberOfProperties,
-            totalAmount: booking.totalFee // totalFee only includes viewing fee
+            totalAmount: booking.totalFee
         });
 
         res.status(201).json({ success: true, data: populatedBooking });
@@ -158,7 +155,6 @@ exports.updateBooking = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Booking not found' });
         }
 
-        // Check authorization
         if (req.user.role === 'customer' && booking.customer.toString() !== req.user.id) {
             return res.status(403).json({ success: false, message: 'Not authorized' });
         }
@@ -170,22 +166,23 @@ exports.updateBooking = async (req, res) => {
             }
         }
 
-        // Prepare update data
         const updateData = {};
         if (visitDate) updateData.visitDate = visitDate;
         if (visitTime) updateData.visitTime = visitTime;
         if (notes !== undefined) updateData.notes = notes;
         if (numberOfProperties) updateData.numberOfProperties = numberOfProperties;
+
         if (moveInCleaningService !== undefined) {
             updateData.moveInCleaningService = {
                 required: moveInCleaningService.required || false,
+                cleaningDate: moveInCleaningService.cleaningDate,
+                cleaningTime: moveInCleaningService.cleaningTime,
                 notes: moveInCleaningService.notes || ''
             };
         }
 
         if (movingService !== undefined) {
             if (movingService.required) {
-                // Validate mover company if provided
                 if (movingService.moverCompany) {
                     const moverCompany = await MoverCompany.findById(movingService.moverCompany);
                     if (!moverCompany || !moverCompany.isActive) {
@@ -225,13 +222,12 @@ exports.updateBooking = async (req, res) => {
             .populate('customer', 'name phone')
             .populate('movingService.moverBooking');
 
-        // Update payment record if booking details changed
         if (numberOfProperties) {
             await Payment.findOneAndUpdate(
                 { booking: booking._id, paymentType: 'viewing_fee' },
                 {
                     numberOfProperties: booking.numberOfProperties,
-                    totalAmount: booking.totalFee // totalFee only includes viewing fee
+                    totalAmount: booking.totalFee
                 }
             );
         }
@@ -280,7 +276,6 @@ exports.updateBookingStatus = async (req, res) => {
     }
 };
 
-// Link mover booking to property booking
 exports.linkMoverBooking = async (req, res) => {
     try {
         const { moverBookingId } = req.body;
@@ -295,7 +290,6 @@ exports.linkMoverBooking = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Not authorized' });
         }
 
-        // Verify mover booking exists and belongs to this customer
         const moverBooking = await MoverBooking.findById(moverBookingId);
         if (!moverBooking) {
             return res.status(404).json({ success: false, message: 'Mover booking not found' });
@@ -305,7 +299,6 @@ exports.linkMoverBooking = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Not authorized to link this mover booking' });
         }
 
-        // Link the mover booking
         booking.movingService.required = true;
         booking.movingService.moverBooking = moverBookingId;
         await booking.save();
